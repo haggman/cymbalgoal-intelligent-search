@@ -73,15 +73,40 @@ resource "google_colab_runtime_template" "lab" {
 # ⚠️ Least certain resource in this file. If `terraform validate` rejects it,
 # comment it out — students can create a runtime from the template themselves,
 # at the cost of cold start on the clock.
+variable "create_colab_runtime" {
+  description = <<-EOT
+    Pre-create a VPC-attached runtime at provision time.
+
+    Only needed if the notebook must reach the cluster over its PRIVATE ip. If the
+    AlloyDB Python Connector works against a PUBLIC ip with enable_iam_auth, this is
+    unnecessary — students can use ANY Colab runtime, no attachment required, and the
+    template below is only kept as a fallback.
+
+    Left false while that is being measured. Creating a runtime costs apply time, and
+    an unused warm runtime costs credits on every student project.
+  EOT
+  type        = bool
+  default     = false
+}
+
 resource "google_colab_runtime" "lab" {
-  name                     = "cymbalgoal-runtime"
-  display_name             = "CymbalGoal Lab Runtime"
-  location                 = var.gcp_region
+  count = var.create_colab_runtime ? 1 : 0
+
+  name         = "cymbalgoal-runtime"
+  display_name = "CymbalGoal Lab Runtime"
+  location     = var.gcp_region
+
+  # Required. The runtime belongs to a specific user — it is not a shared pool
+  # resource, which is itself a reason to prefer the public-IP path: one runtime
+  # per student has to be provisioned per student.
+  runtime_user = var.gcp_username
+
   notebook_runtime_template_ref {
     notebook_runtime_template = google_colab_runtime_template.lab.id
   }
 
-  # Start it now so it is warm when the student arrives.
+  # Warm before the student arrives, so cold start lands in the instructor's
+  # pre-warm window rather than on the lab clock.
   desired_state = "RUNNING"
 
   depends_on = [
