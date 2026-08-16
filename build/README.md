@@ -36,3 +36,30 @@ Every test prints a `VERDICT:` line so answers are greppable rather than buried 
 
 Delete this folder, or keep the repo private until release. A public repo containing a script that
 opens an AlloyDB instance to `0.0.0.0/0` is a bad look regardless of the surrounding comments.
+
+---
+
+## Terraform is no longer pre-installed in Cloud Shell
+
+As of ~2026-06-20, Google removed Terraform from the Cloud Shell image; running it prints an
+install prompt. Install it yourself, **pinned to the version `terraform/runtime.yaml` declares**:
+
+```bash
+TF_VERSION=1.12.1        # must match runtime.yaml, NOT latest
+mkdir -p ~/bin
+curl -fsSL "https://releases.hashicorp.com/terraform/${TF_VERSION}/terraform_${TF_VERSION}_linux_amd64.zip" -o /tmp/tf.zip
+unzip -oq /tmp/tf.zip -d ~/bin && rm /tmp/tf.zip
+export PATH="$HOME/bin:$PATH"
+terraform version
+```
+
+**Why pin rather than take latest.** Validating on a newer Terraform than the Qwiklabs runtime
+executes means testing a different toolchain than students get — the exact failure this
+manual-first process exists to catch early. `1.12.1` is what ~33 shipping labs use.
+
+`~/bin` survives a Cloud Shell restart; the `export PATH` does not. Append it to `~/.bashrc` for a
+long session.
+
+**Note for other courses:** any lab that has *students* run Terraform in Cloud Shell — mkt007 /
+`cymbalflix-alloydb` does, at Task 1.4 — now needs an install step in its instructions, or it broke
+in June. CymbalGoal is unaffected: Terraform runs at Start Lab and is never mentioned to students.

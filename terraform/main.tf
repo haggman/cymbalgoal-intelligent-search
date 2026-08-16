@@ -143,14 +143,32 @@ resource "google_alloydb_instance" "primary" {
     cpu_count = var.cpu_count
   }
 
-  # Set AT CREATION. Enabling observability later forces a restart mid-provision,
-  # and it cannot be enabled on secondaries at all — so if a read pool is ever
-  # added (D-32), this must already be here.
-  observability_config {
-    enabled                 = true
-    track_active_queries    = true
-    track_wait_events       = true
-    max_query_string_length = 10000
+  # ⚠️ observability_config is NOT in the GA google provider — verified against
+  # the installed schema at the newest 7.x, which offers only:
+  #   client_connection_config, connection_pool_config, machine_config,
+  #   network_config, psc_instance_config, query_insights_config,
+  #   read_pool_config, timeouts
+  # The registry docs describing it are ahead of the released GA provider.
+  #
+  # That turned out to be the right prompt to ask a better question: LAB 1 DOES
+  # NOT NEED IT. Observability powers wait events and active queries, which is
+  # Lab 3's story. Each lab provisions its own cluster, so P-14's "set it at
+  # creation" applies to Lab 3's cluster, not this one. Carrying it here was
+  # inheriting a requirement that does not belong to this lab.
+  #
+  # 🔴 FOR LAB 3: resolve before writing its Terraform. Either use google-beta
+  # for the instance resource (mkt004 and ce436 both already declare it), or set
+  # it from the startup VM with `gcloud alloydb instances update` — which works
+  # but costs a restart mid-provision, the exact thing P-14 warns against.
+  #
+  # query_insights_config IS GA and is the Query Insights surface Lab 3 Task 2
+  # uses. Harmless here, and it means Labs 2 and 3 extend a base that already
+  # has it rather than adding it later and forcing a restart.
+  query_insights_config {
+    query_string_length     = 4500
+    record_application_tags = true
+    record_client_address   = true
+    query_plans_per_minute  = 5
   }
 
   # ⚠️ EVERY NAME HERE IS VERIFIED against
