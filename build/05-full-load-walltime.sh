@@ -110,8 +110,17 @@ echo "################ 4. PASS 1 — eight relational tables ################"
 # ---------------------------------------------------------------------------
 # Column list from the manifest, never positional CSV order.
 # Parents before children.
+# 🔴 The manifest's column_order is DDL-derived: for players and clubs it lists
+# profile_text and profile_embedding, which the pass-1 CSVs DO NOT CONTAIN.
+# That is the two-pass contract working as intended — pass 2 fills them — but it
+# means column_order describes the TABLE, not the FILE. Feeding it straight to
+# \copy gives: ERROR: missing data for column "profile_text".
+#
+# So: take column_order as authoritative for ORDER, then subtract the pass-2
+# columns. Still never positional, still never guessed.
 python3 - <<'PY' > ~/cgload/collist.env
 import json, os
+PASS2 = {'profile_text', 'profile_embedding'}
 m = json.load(open(os.path.expanduser('~/cgload/manifest.json')))
 sf = m.get('staged_files')
 items = sf.items() if isinstance(sf, dict) else [(f.get('name'), f) for f in sf]
@@ -119,11 +128,41 @@ for k, v in items:
     if not isinstance(v, dict): continue
     tbl = str(k).split('/')[-1].replace('.csv.gz','').replace('.csv','')
     co = v.get('column_order')
-    if co:
-        print(f'COLS_{tbl}="{",".join(co)}"')
+    if not co: continue
+    kept = [c for c in co if c not in PASS2]
+    if len(kept) != len(co):
+        print(f'# {tbl}: dropped {len(co)-len(kept)} pass-2 column(s) from the load list',
+              file=__import__('sys').stderr)
+    print(f'COLS_{tbl}="{",".join(kept)}"')
 PY
 source ~/cgload/collist.env
 cat ~/cgload/collist.env
+
+echo
+echo "--- PREFLIGHT: does each file's field count match its column list? ---"
+echo "--- (this is the check that would have caught the profile_text bug) ---"
+PREFLIGHT_OK=1
+for t in competitions clubs players games appearances game_events player_valuations transfers; do
+  var="COLS_$t"; cols="${!var:-}"
+  [[ -z "$cols" ]] && { echo "  $t: NO COLUMN LIST"; PREFLIGHT_OK=0; continue; }
+  n_cols=$(awk -F, '{print NF}' <<<"$cols")
+  n_file=$(gcloud storage cat "$BUCKET/$t.csv.gz" 2>/dev/null | gunzip -c 2>/dev/null | head -1 \
+           | python3 -c "import sys,csv
+try: print(len(next(csv.reader(sys.stdin))))
+except Exception: print(0)")
+  if [[ "$n_cols" == "$n_file" ]]; then
+    printf "  %-20s cols=%-3s file=%-3s ✓\n" "$t" "$n_cols" "$n_file"
+  else
+    printf "  %-20s cols=%-3s file=%-3s ✗ MISMATCH\n" "$t" "$n_cols" "$n_file"
+    PREFLIGHT_OK=0
+  fi
+done
+if [[ "$PREFLIGHT_OK" != "1" ]]; then
+  echo
+  echo "!! Preflight failed. Loading anyway would either error out or, worse,"
+  echo "!! silently shift values into the wrong columns. Fix the list first."
+  exit 1
+fi
 
 PASS1_START=$SECONDS
 for t in competitions clubs players games appearances game_events player_valuations transfers; do
