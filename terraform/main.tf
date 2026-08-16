@@ -229,9 +229,22 @@ resource "google_alloydb_instance" "primary" {
   #   google_ml_integration.enable_ai_query_engine
   # Deliberately NOT set, because it does not exist on AlloyDB at any version:
   #   google_ml_integration.enable_model_endpoint_management  (Cloud SQL vocabulary)
-  # Deliberately NOT set, because we use private IP:
-  #   password.enforce_complexity  (mandatory ONLY when public IP is enabled)
   database_flags = {
+    # MANDATORY whenever public IP is enabled. AlloyDB rejects the update without
+    # it:
+    #   Error 400: password complexity flag password.enforce_complexity is
+    #   required when public IP is enabled
+    # It reads like incidental hardening in CymbalFlix's config. It is not — it is
+    # a precondition of the public-IP path, and it applies to updates as well as
+    # creates.
+    "password.enforce_complexity" = "on"
+
+    # Required for enable_iam_auth to work from the AlloyDB Python Connector.
+    # google_alloydb_user creates the IAM principal; this flag is what lets it
+    # actually authenticate. Declaring the user without this flag builds the
+    # pretense of IAM auth without the mechanism. Proven in CymbalFlix.
+    "alloydb.iam_authentication" = "on"
+
     "google_ml_integration.enable_preview_ai_functions" = "on"
     "google_columnar_engine.enabled"                    = "on"
   }
