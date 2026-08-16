@@ -62,6 +62,29 @@ resource "google_compute_subnetwork" "main" {
   ip_cidr_range = "10.0.0.0/24"
   network       = google_compute_network.main.id
   region        = var.gcp_region
+
+  # The startup VM has no external IP. This lets it reach Google APIs — GCS for
+  # the corpus, the AlloyDB Admin API for the Data API PATCH — directly rather
+  # than hairpinning through Cloud NAT. NAT still covers apt.debian.org, which
+  # is not a Google endpoint.
+  private_ip_google_access = true
+}
+
+# A custom VPC starts with NO firewall rules — not even the default-allow-ssh
+# that the `default` network ships with. Without this, there is no way to reach
+# the startup VM at all when provisioning fails, and the serial console is the
+# only window. IAP's fixed range is the safe way in: no public IP required, and
+# access is governed by IAM rather than by source address.
+resource "google_compute_firewall" "iap_ssh" {
+  name          = "cymbalgoal-allow-iap-ssh"
+  network       = google_compute_network.main.name
+  direction     = "INGRESS"
+  source_ranges = ["35.235.240.0/20"] # IAP TCP forwarding, documented and fixed
+
+  allow {
+    protocol = "tcp"
+    ports    = ["22"]
+  }
 }
 
 # AlloyDB is VPC-native and reaches the managed service over Private Service

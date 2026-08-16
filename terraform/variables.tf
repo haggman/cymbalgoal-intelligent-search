@@ -47,6 +47,21 @@ variable "gcp_username" {
     fell back to a variable.
   EOT
   type        = string
+
+  # AlloyDB does NOT validate that an ALLOYDB_IAM_USER principal exists — it will
+  # happily create a database user for an address nobody owns. A typo, or the
+  # placeholder from terraform.tfvars.example, produces a silently useless grant:
+  # the apply succeeds, the output looks right, and the human doing the testing
+  # has no alloydbsuperuser. Caught exactly that way on the first live apply.
+  validation {
+    condition     = can(regex("^[^@]+@[^@]+\\.[^@]+$", var.gcp_username))
+    error_message = "gcp_username must be a full email address (e.g. student-03-abc123@qwiklabs.net)."
+  }
+
+  validation {
+    condition     = !can(regex("(?i)(XX-xxxxxxxx|example\\.com|CHANGEME)", var.gcp_username))
+    error_message = "gcp_username is still the placeholder from terraform.tfvars.example. Put your real lab email in terraform.tfvars."
+  }
 }
 
 # ---------------------------------------------------------------------------
