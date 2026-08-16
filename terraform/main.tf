@@ -1,118 +1,285 @@
-# CymbalGoal Lab 1 — provisioning skeleton.
+# =============================================================================
+# CymbalGoal Lab 1 — Intelligent Search. Provisioning.
+# =============================================================================
+# Runs from the Start Lab button. The student never sees it and never runs it;
+# from their point of view the cluster simply exists.
 #
-# ⚠️ SCAFFOLDING ONLY. Nothing below is applied yet.
+# Every value here is measured, not assumed. Provenance:
+#   cymbalgoal-database-flags.md          flag names, verified against the API
+#   cymbalgoal-provisioning-walltime.md   timings and the load ordering
+#   cymbalgoal-qwiklabs-runtime-facts.md  which variables the platform injects
+#   cymbalgoal-terraform-baseline.md      what to inherit from CymbalFlix
 #
-# The version pins in versions.tf are settled and measured. Everything in this
-# file is still gated on live results from the prototype rig (see ../build/).
-# It is written out as commented structure rather than working HCL on purpose:
-# a plausible-looking main.tf that has never been applied is worse than an
-# obviously unfinished one, because someone eventually trusts it.
-#
-# Open decisions that change the shape of this file:
-#
-#   D-09  Does Lab 1 Task 5 use the semantic-reranker form of ai.rank()?
-#         If yes, discoveryengine.googleapis.com MUST be enabled below — that
-#         form draws its models from Discovery Engine. If no, drop it.
-#
-#   D-31  Load method: `gcloud alloydb clusters import` vs `psql \copy` from
-#         the startup VM. Decide with real file sizes. Note the import API is
-#         one table per call and permits one operation at a time, which matters
-#         with eight relational tables plus two profile files in play.
-#
-#   D-32  Does the read pool earn its keep? No lab task currently requires one.
-#         It was inherited from mkt007's cluster shape and costs wall-clock on
-#         every student cluster. Measure with and without before committing.
-#
-#   T1A   If BM25 does not feed ai.hybrid_search(), Lab 1 Task 4 changes shape
-#         but NOT this file — provisioning is unaffected either way.
+# Measured total: ~15-18 min. Cluster + instance is ~85% of that.
+# =============================================================================
 
-# ---------------------------------------------------------------------------
+locals {
+  cluster_id  = "cymbalgoal-cluster"
+  instance_id = "cymbalgoal-primary"
+  network     = "cymbalgoal-network"
+  database    = "cymbalgoal"
+}
+
+data "google_project" "current" {
+  project_id = var.gcp_project_id
+}
+
+# -----------------------------------------------------------------------------
 # APIs
-# ---------------------------------------------------------------------------
-# resource "google_project_service" "apis" {
-#   for_each = toset([
-#     "alloydb.googleapis.com",
-#     "compute.googleapis.com",
-#     "servicenetworking.googleapis.com",
-#     "aiplatform.googleapis.com",
-#     # "discoveryengine.googleapis.com",   # ← gated on D-09
-#   ])
-#   service            = each.value
-#   disable_on_destroy = false
-# }
+# -----------------------------------------------------------------------------
+resource "google_project_service" "apis" {
+  for_each = toset([
+    "alloydb.googleapis.com",
+    "compute.googleapis.com",
+    "servicenetworking.googleapis.com",
+    "aiplatform.googleapis.com",
+    "cloudresourcemanager.googleapis.com",
+    "iam.googleapis.com",
 
-# ---------------------------------------------------------------------------
+    # REQUIRED by D-09. Lab 1 Task 5 uses the semantic-reranker form of
+    # ai.rank() — signature confirmed live as
+    #   (model_id, search_string, documents text[], top_n)
+    # and that form draws its models from Discovery Engine. Without this API
+    # Task 5 fails at the last step of the lab, which is the worst possible
+    # place to discover it.
+    "discoveryengine.googleapis.com",
+  ])
+  service            = each.value
+  disable_on_destroy = false
+}
+
+# -----------------------------------------------------------------------------
+# Network — dedicated VPC, not default
+# -----------------------------------------------------------------------------
+resource "google_compute_network" "main" {
+  name                    = local.network
+  auto_create_subnetworks = false
+  depends_on              = [google_project_service.apis]
+}
+
+resource "google_compute_subnetwork" "main" {
+  name          = "${local.network}-subnet"
+  ip_cidr_range = "10.0.0.0/24"
+  network       = google_compute_network.main.id
+  region        = var.gcp_region
+}
+
+# AlloyDB is VPC-native and reaches the managed service over Private Service
+# Access. The peering must exist before the instance, or instance creation
+# races it — hence the explicit depends_on further down.
+resource "google_compute_global_address" "psa" {
+  name          = "cymbalgoal-psa"
+  purpose       = "VPC_PEERING"
+  address_type  = "INTERNAL"
+  prefix_length = 20
+  network       = google_compute_network.main.id
+  depends_on    = [google_project_service.apis]
+}
+
+resource "google_service_networking_connection" "psa" {
+  network                 = google_compute_network.main.id
+  service                 = "servicenetworking.googleapis.com"
+  reserved_peering_ranges = [google_compute_global_address.psa.name]
+  depends_on              = [google_project_service.apis]
+}
+
+# NAT, so the startup VM can reach GCS and the AlloyDB Admin API without a
+# public IP of its own.
+resource "google_compute_router" "main" {
+  name    = "cymbalgoal-router"
+  region  = var.gcp_region
+  network = google_compute_network.main.id
+}
+
+resource "google_compute_router_nat" "main" {
+  name                               = "cymbalgoal-nat"
+  router                             = google_compute_router.main.name
+  region                             = var.gcp_region
+  nat_ip_allocate_option             = "AUTO_ONLY"
+  source_subnetwork_ip_ranges_to_nat = "ALL_SUBNETWORKS_ALL_IP_RANGES"
+}
+
+# -----------------------------------------------------------------------------
 # Cluster
-# ---------------------------------------------------------------------------
-# POSTGRES_18 is pinned explicitly and must never be left to the default.
-# RUM does not exist on PG 18, which is why this lab teaches BM25 —
-# the version choice and the curriculum are the same decision.
-#
-# resource "google_alloydb_cluster" "cymbalgoal" {
-#   cluster_id       = "cymbalgoal-cluster"
-#   location         = var.gcp_region
-#   database_version = "POSTGRES_18"
-#   network_config { network = ... }
-#   initial_user { user = "postgres", password = ... }
-# }
+# -----------------------------------------------------------------------------
+# AlloyDB requires an initial password even in an IAM-only setup. We generate
+# one, hand it to the startup VM, and otherwise ignore it.
+resource "random_password" "initial" {
+  length           = 24
+  special          = true
+  override_special = "-_=+"
+}
 
-# ---------------------------------------------------------------------------
+resource "google_alloydb_cluster" "main" {
+  cluster_id = local.cluster_id
+  location   = var.gcp_region
+
+  # POSTGRES_18 is pinned explicitly and must never be left to the default.
+  # RUM does not exist on PG 18, which is *why* this lab teaches BM25 — the
+  # version choice and the curriculum are the same decision.
+  database_version = "POSTGRES_18"
+
+  network_config {
+    network = google_compute_network.main.id
+  }
+
+  initial_user {
+    user     = "postgres"
+    password = random_password.initial.result
+  }
+
+  depends_on = [google_service_networking_connection.psa]
+}
+
+# -----------------------------------------------------------------------------
 # Primary instance
-# ---------------------------------------------------------------------------
-# Two ordering constraints that are easy to get wrong and expensive to discover:
-#
-#   1. observability_config MUST be set at creation. Enabling it later forces a
-#      restart in the middle of provisioning.
-#   2. It cannot be enabled on secondaries, so the primary must exist and be
-#      configured BEFORE any read pool is created.
-#
-#   3. database_flags are instance-level, not cluster-level. Every flag set here
-#      must be repeated verbatim on any read pool, or the pool silently behaves
-#      differently from the primary.
-#
-# resource "google_alloydb_instance" "primary" {
-#   instance_type = "PRIMARY"
-#   observability_config { enabled = true, track_active_queries = true, track_wait_events = true }
-#   database_flags = { "google_ml_integration.enable_model_endpoint_management" = "on" }
-# }
+# -----------------------------------------------------------------------------
+resource "google_alloydb_instance" "primary" {
+  cluster       = google_alloydb_cluster.main.name
+  instance_id   = local.instance_id
+  instance_type = "PRIMARY"
 
-# ---------------------------------------------------------------------------
-# Read pool — gated on D-32
-# ---------------------------------------------------------------------------
-# resource "google_alloydb_instance" "readpool" { ... }
+  machine_config {
+    cpu_count = var.cpu_count
+  }
 
-# ---------------------------------------------------------------------------
-# Database user
-# ---------------------------------------------------------------------------
-# resource "google_alloydb_user" "lab_user" { ... }
+  # Set AT CREATION. Enabling observability later forces a restart mid-provision,
+  # and it cannot be enabled on secondaries at all — so if a read pool is ever
+  # added (D-32), this must already be here.
+  observability_config {
+    enabled                 = true
+    track_active_queries    = true
+    track_wait_events       = true
+    max_query_string_length = 10000
+  }
 
-# ---------------------------------------------------------------------------
-# Startup VM — the escape hatch
-# ---------------------------------------------------------------------------
-# Everything Terraform structurally cannot do, in this order:
+  # ⚠️ EVERY NAME HERE IS VERIFIED against
+  #   GET .../locations/{r}/supportedDatabaseFlags
+  # AlloyDB rejects the ENTIRE instance create if one flag name is unknown —
+  # no warning, no partial apply. At Start Lab that means every student in the
+  # room gets a cluster with no instance. Never add a name you have not checked.
+  #
+  # Deliberately NOT set, because they already default to on:
+  #   google_ml_integration.enable_model_support
+  #   google_ml_integration.enable_ai_query_engine
+  # Deliberately NOT set, because it does not exist on AlloyDB at any version:
+  #   google_ml_integration.enable_model_endpoint_management  (Cloud SQL vocabulary)
+  # Deliberately NOT set, because we use private IP:
+  #   password.enforce_complexity  (mandatory ONLY when public IP is enabled)
+  database_flags = {
+    "google_ml_integration.enable_preview_ai_functions" = "on"
+    "google_columnar_engine.enabled"                    = "on"
+  }
+
+  depends_on = [google_service_networking_connection.psa]
+}
+
+# -----------------------------------------------------------------------------
+# ⚠️ THE BINDING EVERYTHING DEPENDS ON
+# -----------------------------------------------------------------------------
+# Without this, google_ml.embedding() / ai.embedding() fail — which means every
+# vector search in the lab fails, from Task 2 onward. The cluster builds fine,
+# the data loads fine, and the lab dies at the first semantic query.
 #
-#   1. CREATE DATABASE cymbalgoal          — no google_alloydb_database resource exists
-#   2. PATCH the Data API setting          — no Terraform surface, no gcloud surface;
-#                                            raw v1alpha REST from the VM
-#   3. CREATE EXTENSION vector, alloydb_scann, google_ml_integration, pg_textsearch
-#                                          — granting alloydbsuperuser where required;
-#                                            BM25 and the Index Advisor both need it
-#   4. Assert the google_ml_integration extension version meets the floor, and FAIL
-#      LOUDLY if it doesn't. A silent version mismatch surfaces as a broken lab task
-#      in front of the room.
-#   5. Apply the schema — TABLES ONLY.
-#      ⚠️ schema.sql as staged also creates the two ScaNN indexes. Running it
-#      wholesale builds them on empty tables, so every one of 14,235 vectors is
-#      then indexed incrementally during the pass-2 UPDATE — the slow path, on
-#      every student cluster. See ../build/README.md.
-#   6. Pass 1 — the eight relational tables, ALWAYS with an explicit column list
-#      taken from the manifest. Never positional CSV order. Parents before children.
-#   7. Pass 2 — load_profiles.sql, which updates only profile_text and
-#      profile_embedding and asserts row counts.
-#   8. Build the ScaNN indexes NOW, after both loads, with maintenance_work_mem
-#      and shared_buffers tuned below total machine memory.
-#   9. Do NOT create the BM25 index. That is Lab 1 Task 3 — it's the lab.
+# The AlloyDB service agent does not exist until the cluster does, so binding
+# the role earlier fails. This depends_on is not decoration.
+resource "google_project_iam_member" "alloydb_vertex" {
+  project    = var.gcp_project_id
+  role       = "roles/aiplatform.user"
+  member     = "serviceAccount:service-${data.google_project.current.number}@gcp-sa-alloydb.iam.gserviceaccount.com"
+  depends_on = [google_alloydb_cluster.main]
+}
+
+# -----------------------------------------------------------------------------
+# Student database user
+# -----------------------------------------------------------------------------
+# Lab 1 Task 3 runs CREATE INDEX ... USING bm25, and Lab 3 queries the Index
+# Advisor. Both require alloydbsuperuser. var.gcp_username carries the student's
+# real lab email — see variables.tf for why the openid data source is wrong here.
+resource "google_alloydb_user" "student" {
+  cluster        = google_alloydb_cluster.main.id
+  user_id        = var.gcp_username
+  user_type      = "ALLOYDB_IAM_USER"
+  database_roles = ["alloydbsuperuser"]
+  depends_on     = [google_alloydb_instance.primary]
+}
+
+# -----------------------------------------------------------------------------
+# D-32 — read pool: DELIBERATELY ABSENT
+# -----------------------------------------------------------------------------
+# CymbalFlix shipped a READ_POOL at 2 vCPU / 1 node and CymbalGoal inherited the
+# shape without inheriting a reason. No task in any of the three labs requires
+# one; Lab 3's System Insights story is the only plausible consumer and it does
+# not need a pool to tell its story. A pool costs provisioning wall-clock on
+# every student cluster.
 #
-# resource "google_compute_instance" "startup" {
-#   metadata_startup_script = templatefile("${path.module}/startup_script.tftpl", { ... })
-# }
+# If one is ever added: database_flags are INSTANCE-level, so every flag above
+# must be repeated on it verbatim, or the pool silently behaves differently.
+
+# -----------------------------------------------------------------------------
+# Startup VM — the escape hatch for what Terraform structurally cannot do
+# -----------------------------------------------------------------------------
+resource "google_service_account" "startup" {
+  account_id   = "cymbalgoal-startup"
+  display_name = "CymbalGoal provisioning VM"
+  depends_on   = [google_project_service.apis]
+}
+
+resource "google_project_iam_member" "startup_roles" {
+  for_each = toset([
+    "roles/alloydb.admin",          # create the database, PATCH the Data API setting
+    "roles/storage.objectViewer",   # read the staged corpus
+    "roles/serviceusage.serviceUsageConsumer",
+  ])
+  project = var.gcp_project_id
+  role    = each.value
+  member  = "serviceAccount:${google_service_account.startup.email}"
+}
+
+resource "google_compute_instance" "startup" {
+  name         = "cymbalgoal-startup"
+  machine_type = "e2-standard-4"
+  zone         = var.gcp_zone
+
+  boot_disk {
+    initialize_params {
+      image = "debian-12"
+      size  = 50 # the profile corpus is 185 MB gzipped; leave room
+    }
+  }
+
+  network_interface {
+    network    = google_compute_network.main.id
+    subnetwork = google_compute_subnetwork.main.id
+    # No access_config — no public IP. Egress via Cloud NAT.
+  }
+
+  service_account {
+    email  = google_service_account.startup.email
+    scopes = ["cloud-platform"]
+  }
+
+  metadata_startup_script = templatefile("${path.module}/startup_script.tftpl", {
+    project_id  = var.gcp_project_id
+    region      = var.gcp_region
+    cluster_id  = local.cluster_id
+    instance_id = local.instance_id
+    db_name     = local.database
+    db_host     = google_alloydb_instance.primary.ip_address
+    db_password = random_password.initial.result
+    gcs_prefix  = var.gcs_data_prefix
+    student     = var.gcp_username
+  })
+
+  # ⚠️ Terraform considers this resource complete when the VM BOOTS, not when
+  # the startup script finishes. It does not and cannot wait for the load.
+  # That is accepted: provisioning is pre-warmed ~1 hour ahead, against ~15-18
+  # min of work. See cymbalgoal-qwiklabs-runtime-facts.md. Task 1 opens with a
+  # row-count query so a student who jumps the gun sees 0 instead of 13,439.
+  depends_on = [
+    google_alloydb_instance.primary,
+    google_project_iam_member.alloydb_vertex,
+    google_project_iam_member.startup_roles,
+    google_compute_router_nat.main,
+  ]
+}

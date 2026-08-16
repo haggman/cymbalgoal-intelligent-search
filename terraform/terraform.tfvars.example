@@ -1,0 +1,7 @@
+# ⚠️ ONLY the variables Qwiklabs actually injects belong here.
+# If you have to add a fifth to make `terraform apply` succeed, you have found a
+# Start Lab failure — fix the config, do not add the variable.
+gcp_project_id = "qwiklabs-gcp-04-23ae51410344"
+gcp_region     = "us-central1"
+gcp_zone       = "us-central1-a"
+gcp_username   = "student-XX-xxxxxxxx@qwiklabs.net"
