@@ -238,11 +238,31 @@ resource "google_project_iam_member" "alloydb_vertex" {
 # Advisor. Both require alloydbsuperuser. var.gcp_username carries the student's
 # real lab email — see variables.tf for why the openid data source is wrong here.
 resource "google_alloydb_user" "student" {
-  cluster        = google_alloydb_cluster.main.id
-  user_id        = var.gcp_username
-  user_type      = "ALLOYDB_IAM_USER"
-  database_roles = ["alloydbsuperuser"]
-  depends_on     = [google_alloydb_instance.primary]
+  cluster   = google_alloydb_cluster.main.id
+  user_id   = var.gcp_username
+  user_type = "ALLOYDB_IAM_USER"
+
+  # ⚠️ `alloydbiamuser` is NOT optional here, and leaving it out is a trap.
+  #
+  # AlloyDB grants it automatically when an ALLOYDB_IAM_USER is created.
+  # database_roles declares the COMPLETE desired set, so listing only
+  # alloydbsuperuser reads as "revoke alloydbiamuser" on the next apply, and
+  # AlloyDB refuses:
+  #
+  #   Error 400: cannot revoke IAM roles [alloydbiamuser alloydbiamgroup
+  #   alloydbiamgroupuser alloydbiamgroupserviceaccount];
+  #   user type cannot be changed
+  #
+  # The first apply succeeds and every apply after it fails — so the config is
+  # not idempotent, and you only find out the second time you touch it.
+  # CymbalFlix carries the same latent bug; it never re-applies, so it never
+  # surfaces there.
+  #
+  # alloydbsuperuser is what Lab 1 Task 3 needs for CREATE INDEX ... USING bm25,
+  # and what Lab 3 needs for the Index Advisor.
+  database_roles = ["alloydbsuperuser", "alloydbiamuser"]
+
+  depends_on = [google_alloydb_instance.primary]
 }
 
 # -----------------------------------------------------------------------------
