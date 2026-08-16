@@ -17,7 +17,15 @@
 # =============================================================================
 
 set -uo pipefail
-exec > >(tee /var/log/cymbalgoal-provision.log) 2>&1
+
+# APPEND, never truncate. The script re-runs on every boot, and overwriting the
+# log meant the failing run erased the evidence of the run before it — which is
+# exactly the run you need to read. Each run gets a banner so they are separable.
+exec > >(tee -a /var/log/cymbalgoal-provision.log) 2>&1
+echo
+echo "#############################################################"
+echo "# CYMBALGOAL PROVISION RUN  $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+echo "#############################################################"
 
 PROJECT="${project_id}"
 REGION="${region}"
@@ -39,8 +47,16 @@ die()  { echo "!!!!! PROVISION FAILED: $* !!!!!"; exit 1; }
 
 step "0. Tools"
 export DEBIAN_FRONTEND=noninteractive
-apt-get update -qq
-apt-get install -y -qq postgresql-client jq || die "apt install"
+# Retry: the VM can boot before Cloud NAT's dataplane is programmed, so the
+# first apt-get may hit a dead network. depends_on guarantees NAT exists, not
+# that it works yet.
+for i in 1 2 3 4 5; do
+  apt-get update -qq && break
+  echo "  apt-get update failed (attempt $i) — waiting for network"; sleep 15
+done
+apt-get install -y -qq postgresql-client jq python3 || die "apt install"
+command -v psql    >/dev/null || die "psql not installed"
+command -v python3 >/dev/null || die "python3 not installed"
 
 # Wait for the instance to accept connections. Terraform reports the instance
 # ready, but there is a short window before the listener answers.
@@ -51,10 +67,42 @@ done
 psql -X -c "SELECT version();" || die "cannot reach AlloyDB at $PGHOST"
 
 # -----------------------------------------------------------------------------
-step "1. Create the database (no Terraform resource exists for this)"
+step "1. Idempotency gate, then create the database"
 # -----------------------------------------------------------------------------
-psql -X -tc "SELECT 1 FROM pg_database WHERE datname='$DB'" | grep -q 1 \
-  || psql -X -c "CREATE DATABASE $DB;" || die "create database"
+# ⚠️ metadata_startup_script runs on EVERY BOOT, not just the first. Live
+# migration, host maintenance, a manual reset, or Terraform replacing the VM all
+# re-trigger it. Without this gate the second run dies at
+#   ERROR: relation "competitions" already exists
+# which is harmless to the data but logs a loud PROVISION FAILED that an
+# instructor pre-warming a cluster would reasonably panic about.
+#
+# Policy, which makes this genuinely re-runnable:
+#   provisioning finished  -> exit 0 immediately, touch nothing
+#   provisioning partial   -> DROP the database and start clean
+#
+# Starting clean is safe because provisioning owns this database entirely — no
+# student work can exist in it yet. A half-provisioned cluster is worth nothing,
+# so rebuilding it is strictly better than leaving it half-built.
+
+DB_EXISTS=$(psql -X -tAc "SELECT 1 FROM pg_database WHERE datname='$DB'" 2>/dev/null)
+
+if [ "$DB_EXISTS" = "1" ]; then
+  DONE=$(psql -X -d "$DB" -tAc \
+    "SELECT count(*) FROM provisioning_status" 2>/dev/null || echo 0)
+  if [ "$${DONE:-0}" -ge 1 ]; then
+    echo "  provisioning already complete on this cluster — nothing to do."
+    psql -X -d "$DB" -c "SELECT * FROM provisioning_status;"
+    echo
+    echo "==================================================="
+    echo " CYMBALGOAL PROVISIONING ALREADY COMPLETE (no-op)"
+    echo "==================================================="
+    exit 0
+  fi
+  echo "  database exists but provisioning did not finish — starting clean."
+  psql -X -c "DROP DATABASE $DB;" || die "drop incomplete database"
+fi
+
+psql -X -c "CREATE DATABASE $DB;" || die "create database"
 export PGDATABASE="$DB"
 
 # -----------------------------------------------------------------------------
@@ -142,6 +190,9 @@ for k, v in items:
         print(f'COLS_{tbl}="{",".join(c for c in co if c not in PASS2)}"')
 PY
 source /opt/cg/cols.env
+echo "--- column lists derived from the manifest ---"
+cat /opt/cg/cols.env
+[ -s /opt/cg/cols.env ] || die "manifest produced no column lists — check staged_files shape"
 
 # PREFLIGHT. A column list that is LONGER than the file errors loudly. One that
 # is the same length but differently ordered loads SILENTLY into the wrong
@@ -152,10 +203,19 @@ for t in competitions clubs players games appearances game_events player_valuati
   var="COLS_$t"; cols="$${!var:-}"
   [ -z "$cols" ] && die "no column_order for $t in manifest"
   n_cols=$(awk -F, '{print NF}' <<<"$cols")
-  n_file=$(gcloud storage cat "$GCS/$t.csv.gz" | gunzip -c | head -1 \
-           | python3 -c "import sys,csv
-try: print(len(next(csv.reader(sys.stdin))))
-except Exception: print(0)")
+  # Pull the header row WITHOUT `head` in the pipeline: closing the pipe early
+  # makes `gcloud storage cat` fail a checksum comparison and emit an error,
+  # which with pipefail can take the whole preflight down. Read one row in
+  # Python instead and let the stream close naturally.
+  n_file=$(gcloud storage cat "$GCS/$t.csv.gz" 2>/dev/null | gunzip -c 2>/dev/null \
+           | python3 -c "
+import sys, csv, itertools
+try:
+    print(len(next(csv.reader(itertools.islice(sys.stdin, 5)))))
+except Exception:
+    print(0)
+" 2>/dev/null)
+  [ "$${n_file:-0}" -gt 0 ] || die "$t: could not read the file to count columns"
   [ "$n_cols" = "$n_file" ] || die "$t column mismatch: list=$n_cols file=$n_file"
   echo "  $t: $n_cols columns OK"
 done
