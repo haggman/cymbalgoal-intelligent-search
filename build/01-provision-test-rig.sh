@@ -100,7 +100,15 @@ for f in d.get('supportedDatabaseFlags',[]):
         print(' ', n, '| versions:', ','.join(f.get('supportedDbVersions',[])))
 " 2>/dev/null || echo "  (listing unavailable — continuing with the verified set)"
 
-FLAGS="google_ml_integration.enable_preview_ai_functions=on"
+# password.enforce_complexity is MANDATORY whenever public IP is enabled.
+# AlloyDB refuses the create without it — which is why CymbalFlix's flag block
+# carried it and why it looked like incidental hardening. It isn't; it's a
+# precondition of the public-IP path. The real lab loads over private IP from a
+# startup VM and will not need it.
+FLAGS_REQUIRED="password.enforce_complexity=on"
+
+FLAGS="$FLAGS_REQUIRED"
+FLAGS="$FLAGS,google_ml_integration.enable_preview_ai_functions=on"
 FLAGS="$FLAGS,google_ml_integration.enable_cost_optimized_ai_functions=on"
 FLAGS="$FLAGS,google_columnar_engine.enabled=on"
 echo "  effective --database-flags: $FLAGS"
@@ -119,15 +127,18 @@ else
     --observability-config-enabled \
     --observability-config-track-active-queries \
     --observability-config-track-wait-events \
-    ${FLAGS:+--database-flags="$FLAGS"} || {
-      echo "  !! instance create failed. Retrying with NO database flags so Tier 1 is not blocked."
+    --database-flags="$FLAGS" || {
+      echo "  !! create failed. Retrying with ONLY the mandatory flag so Tier 1 is not blocked."
+      # NOT "no flags" — a public-IP instance cannot be created without
+      # password.enforce_complexity, so an empty flag set fails identically.
       gcloud alloydb instances create "$INSTANCE" \
         --cluster="$CLUSTER" --region="$REGION" --project="$PROJECT" \
         --instance-type=PRIMARY --cpu-count=8 --availability-type=ZONAL \
         --assign-inbound-public-ip=ASSIGN_IPV4 \
         --observability-config-enabled \
         --observability-config-track-active-queries \
-        --observability-config-track-wait-events || exit 1
+        --observability-config-track-wait-events \
+        --database-flags="$FLAGS_REQUIRED" || exit 1
     }
 fi
 
