@@ -1,0 +1,17 @@
+# Terraform
+.terraform/
+.terraform.lock.hcl
+*.tfstate
+*.tfstate.*
+*.tfvars
+crash.log
+
+# Local build artifacts — never commit a cluster password or a connection env
+*.log
+cymbalgoal-conn.env
+manifest.json
+
+# Notebook noise
+.ipynb_checkpoints/
+__pycache__/
+.DS_Store
