@@ -166,6 +166,30 @@ resource "google_alloydb_instance" "primary" {
     cpu_count = var.cpu_count
   }
 
+  # Public IP — reversing an earlier decision, deliberately.
+  #
+  # What was rejected earlier was public IP + raw psql from Cloud Shell, which
+  # forces 0.0.0.0/0 authorized networks because Cloud Shell's egress IP is
+  # dynamic and changes on restart. That is genuinely bad to ship.
+  #
+  # This is not that. The AlloyDB Python Connector with enable_iam_auth=True
+  # controls access by IAM, transports over mTLS with certs fetched from the
+  # Admin API, and involves no password anywhere. The public IP is an endpoint
+  # for an authenticated tunnel, not an exposed Postgres port. It is what the
+  # shipped CymbalFlix lab does.
+  #
+  # It also removes a requirement from the student: with public IP, ANY Colab
+  # runtime works. VPC-attached would force them onto one specific runtime,
+  # which is one more thing to get wrong in a room of 300 people.
+  #
+  # ⚠️ authorized_external_networks is deliberately NOT set yet — testing
+  # whether the Connector needs it at all. If it connects without, leave it out;
+  # IAM is doing the access control. If it does not, add the narrowest range
+  # that works and never 0.0.0.0/0 in a shipped lab.
+  network_config {
+    enable_public_ip = true
+  }
+
   # ⚠️ observability_config is NOT in the GA google provider — verified against
   # the installed schema at the newest 7.x, which offers only:
   #   client_connection_config, connection_pool_config, machine_config,
