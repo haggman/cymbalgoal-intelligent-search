@@ -31,7 +31,10 @@ variable "gcp_region" {
 }
 
 variable "gcp_zone" {
-  description = "Zone within gcp_region, used by the startup VM."
+  description = <<-EOT
+    Zone within gcp_region. Nothing uses it since the startup VM was removed, but
+    Qwiklabs injects it and an undeclared injected variable is an error, so it stays.
+  EOT
   type        = string
   default     = "us-central1-a"
 }
@@ -76,10 +79,4 @@ variable "cpu_count" {
   EOT
   type        = number
   default     = 8
-}
-
-variable "gcs_data_prefix" {
-  description = "Staged corpus location. Pinned snapshot 2026-08-14; never fetched from Kaggle at lab time."
-  type        = string
-  default     = "gs://class-demo/alloydb-labs/cymbalgoal"
 }
