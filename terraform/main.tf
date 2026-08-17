@@ -15,7 +15,9 @@
 #   * The load teaches something. CREATE INDEX ... USING scann is a featured
 #     product; burying it in a shell script nobody reads wastes it.
 #
-# Measured: cluster + instance ~12-15 min (85% of total). Notebook load ~4.4 min.
+# Measured in a virgin Qwiklabs project, 2026-08-17: first apply 542 s (~9 min),
+# second plan clean. Notebook load ~4.5 min, reproducible across two runs.
+# Pre-warming an hour ahead of an event is ~6x headroom.
 #
 # Provenance for every value here:
 #   cymbalgoal-database-flags.md          flag names, verified against the API
@@ -28,6 +30,11 @@ locals {
   cluster_id  = "cymbalgoal-cluster"
   instance_id = "cymbalgoal-primary"
   network     = "cymbalgoal-network"
+
+  # Qwiklabs injects `username` as the LOCAL PART ONLY — "student-03-abc123" —
+  # so the domain is appended here. This is the convention every lab in the
+  # content repo follows; see the long note in variables.tf.
+  student_email = "${var.username}@${var.student_email_domain}"
 }
 
 data "google_project" "current" {
@@ -202,12 +209,13 @@ resource "google_project_iam_member" "alloydb_vertex" {
 # Task 1 creates the database, Task 3 runs CREATE INDEX ... USING bm25, and Lab 3
 # uses the Index Advisor. All need alloydbsuperuser.
 #
-# var.gcp_username carries the student's real lab email. Do NOT use
-# data.google_client_openid_userinfo — it returns the Terraform runner's
-# identity, which is why CymbalFlix declared it and then fell back to a variable.
+# local.student_email is var.username with the domain appended — the platform
+# supplies the local part only. Do NOT use data.google_client_openid_userinfo:
+# it returns the Terraform runner's identity, not the student's, which is why
+# CymbalFlix declared it and then fell back to a variable.
 resource "google_alloydb_user" "student" {
   cluster   = google_alloydb_cluster.main.id
-  user_id   = var.gcp_username
+  user_id   = local.student_email
   user_type = "ALLOYDB_IAM_USER"
 
   # ⚠️ TWO traps here, and both only appear on the SECOND apply.

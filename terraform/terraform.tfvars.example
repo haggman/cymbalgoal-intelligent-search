@@ -1,7 +1,17 @@
-# ⚠️ ONLY the variables Qwiklabs actually injects belong here.
-# If you have to add a fifth to make `terraform apply` succeed, you have found a
-# Start Lab failure — fix the config, do not add the variable.
+# For applying this by hand in YOUR OWN project. At Start Lab, Qwiklabs injects
+# these and no tfvars file exists at all.
+#
+# ⚠️ ONLY the variables Qwiklabs actually injects belong here. If you have to add
+# one to make `terraform apply` succeed, you have found a Start Lab failure — fix
+# the config, do not add the variable.
+#
+# ⚠️ `username` is the LOCAL PART ONLY, with no @domain. That is what the platform
+# supplies, and main.tf appends the domain itself. Putting a full email here is
+# the single most likely way to make a test pass that Start Lab would fail.
 gcp_project_id = "qwiklabs-gcp-04-23ae51410344"
 gcp_region     = "us-central1"
 gcp_zone       = "us-central1-a"
-gcp_username   = "student-XX-xxxxxxxx@qwiklabs.net"
+username       = "student-03-abc123"
+
+# Applying in a personal (non-Qwiklabs) project? Override the domain too:
+# student_email_domain = "example.com"
