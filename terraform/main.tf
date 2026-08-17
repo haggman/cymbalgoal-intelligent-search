@@ -210,13 +210,21 @@ resource "google_alloydb_user" "student" {
   user_id   = var.gcp_username
   user_type = "ALLOYDB_IAM_USER"
 
-  # ⚠️ alloydbiamuser is NOT optional. AlloyDB grants it automatically on
-  # creation, and database_roles declares the COMPLETE set — so listing only
-  # alloydbsuperuser reads as "revoke alloydbiamuser" on the NEXT apply:
-  #   Error 400: cannot revoke IAM roles [alloydbiamuser ...]
-  # The first apply succeeds and every one after it fails. CymbalFlix carries the
-  # same latent bug; it never re-applies, so it never surfaces there.
-  database_roles = ["alloydbsuperuser", "alloydbiamuser"]
+  # ⚠️ TWO traps here, and both only appear on the SECOND apply.
+  #
+  # 1. alloydbiamuser is NOT optional. AlloyDB grants it automatically on
+  #    creation, and database_roles declares the COMPLETE set — so listing only
+  #    alloydbsuperuser reads as "revoke alloydbiamuser":
+  #      Error 400: cannot revoke IAM roles [alloydbiamuser ...]
+  #
+  # 2. ORDER MATTERS. database_roles is a LIST, not a set, and AlloyDB returns
+  #    the roles sorted. Declaring them in any other order is a permanent diff —
+  #    terraform plan shows `- "alloydbiamuser"` followed by `+ "alloydbiamuser"`
+  #    and wants to "change" the resource on every apply, forever. Keep this
+  #    ALPHABETICAL to match what the API hands back.
+  #
+  # CymbalFlix carries both bugs. It applies once, so neither ever surfaces.
+  database_roles = ["alloydbiamuser", "alloydbsuperuser"]
 
   depends_on = [google_alloydb_instance.primary]
 }
