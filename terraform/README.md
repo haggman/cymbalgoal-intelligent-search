@@ -80,10 +80,10 @@ exactly the thing that breaks in production.
 
 ## Rebuilding in your own project
 
-Terraform 1.12+, google provider 7.x, and a project with billing plus the AlloyDB and Vertex AI
+Terraform 1.12+, google provider 7.x, and a project with billing plus the AlloyDB and Gemini Enterprise Agent Platform
 APIs. Copy `terraform.tfvars.example` to `terraform.tfvars` and fill it in.
 
-Region must be `us-central1` or `us-east1`: `ai.embedding()` calls Vertex from the cluster's own
+Region must be `us-central1` or `us-east1`: `ai.embedding()` calls Agent Platform from the cluster's own
 region, and `gemini-embedding-001` is not served everywhere. There's a `validation` block that
 will stop you rather than let you find out at query time.
 

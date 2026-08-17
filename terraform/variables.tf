@@ -21,7 +21,7 @@ variable "gcp_region" {
   description = <<-EOT
     Deployment region. Constrained to us-central1 or us-east1 for two independent reasons:
       1. QueryData context sets exist in only four regions; these are the two US ones.
-      2. ai.embedding() calls Vertex from the cluster's own region, so the region
+      2. ai.embedding() calls Agent Platform from the cluster's own region, so the region
          must serve gemini-embedding-001.
     qwiklabs.yaml narrows allowed_locations to the same two — both gates, deliberately.
   EOT

@@ -44,7 +44,7 @@ Read `terraform/README.md` for the parts worth your attention.
 
 ## Rebuilding this in your own project
 
-You'll need a Google Cloud project with billing, the AlloyDB and Vertex AI APIs enabled, and
+You'll need a Google Cloud project with billing, the AlloyDB and Gemini Enterprise Agent Platform APIs enabled, and
 Terraform 1.12 or newer. Start with `terraform/README.md`.
 
 The one thing you cannot copy is the data: the staged corpus lives in a bucket owned by the course.

@@ -49,7 +49,7 @@ resource "google_project_service" "apis" {
     "alloydb.googleapis.com",
     "compute.googleapis.com",
     "servicenetworking.googleapis.com",
-    "aiplatform.googleapis.com", # Vertex, and Colab Enterprise runtimes
+    "aiplatform.googleapis.com", # Gemini Enterprise Agent Platform (API ID keeps the old name), and Colab runtimes
     "cloudresourcemanager.googleapis.com",
     "iam.googleapis.com",
 
@@ -132,6 +132,34 @@ resource "google_alloydb_instance" "primary" {
   instance_id   = local.instance_id
   instance_type = "PRIMARY"
 
+  # ⚠️ NOT the default. AlloyDB defaults a PRIMARY to availability_type =
+  # "REGIONAL", which builds an HA pair: an active node plus a standby node in a
+  # second zone, with automated failover. That doubles the capacity request.
+  #
+  # Measured consequence, 2026-08-17, us-central1:
+  #   Error code 9: Invalid resource state: Location "us-central1" does not have
+  #   enough resources available to fulfill the request.
+  # That is the scheduler declining to place 8 vCPU + a standby 8 vCPU, not a
+  # quota you can raise. Retrying the same request is a coin flip.
+  #
+  # ZONAL is one node, no failover — and nothing in this lab wants failover. The
+  # cluster lives about two hours and holds a corpus that is regenerable from a
+  # bucket in minutes. The real cost of REGIONAL is that it doubles the footprint
+  # every student needs scheduled AT THE SAME MOMENT: at a 300-person event that
+  # is 600 nodes instead of 300, in one region, at Start Lab.
+  #
+  # ⚠️ Do NOT add gce_zone. A ZONAL instance permits pinning a zone, and pinning
+  # is strictly worse here — leaving it unset lets Google place the node in
+  # whichever zone actually has capacity. Naming a zone re-creates the failure we
+  # just fixed, in a narrower way.
+  availability_type = "ZONAL"
+
+  # 8 vCPU is deliberate and is left alone. Instance creation dominates
+  # provisioning wall clock (~9 min of the total), and every timing the
+  # instructor guide quotes — the ~4.5 min notebook load, the 47 s ScaNN build,
+  # the 2.9 s BM25 build — was measured at this size. Dropping to 4 would save
+  # nothing that matters and would invalidate all of them. Halving the request
+  # via ZONAL was the fix; shrinking the node was not needed.
   machine_config {
     cpu_count = var.cpu_count
   }
