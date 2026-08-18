@@ -31,10 +31,17 @@ locals {
   instance_id = "cymbalgoal-primary"
   network     = "cymbalgoal-network"
 
-  # Qwiklabs injects `username` as the LOCAL PART ONLY — "student-03-abc123" —
-  # so the domain is appended here. This is the convention every lab in the
-  # content repo follows; see the long note in variables.tf.
-  student_email = "${var.username}@${var.student_email_domain}"
+  # ⚠️ Append the domain ONLY if it is not already there.
+  #
+  # Measured on a live Start Lab run: qwiklabs.yaml chooses which form arrives,
+  # and the two references differ —
+  #   user_0.local_username -> "student-03-abc123"                 (what we pass)
+  #   user_0.username       -> "student-03-abc123@qwiklabs.net"
+  # Blindly appending would produce "...@qwiklabs.net@qwiklabs.net", which
+  # AlloyDB accepts without complaint and which no student owns. They would find
+  # out at Task 3, when CREATE INDEX ... USING bm25 fails for want of
+  # alloydbsuperuser. See the long note in variables.tf.
+  student_email = can(regex("@", var.username)) ? var.username : "${var.username}@${var.student_email_domain}"
 }
 
 data "google_project" "current" {

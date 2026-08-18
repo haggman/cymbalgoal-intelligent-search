@@ -70,8 +70,10 @@ variable "gcp_zone" {
 # -----------------------------------------------------------------------------
 variable "username" {
   description = <<-EOT
-    The student's lab username, LOCAL PART ONLY (e.g. "student-03-abc123").
-    main.tf appends "@qwiklabs.net".
+    The student's lab username. EITHER "student-03-abc123" (local part, what
+    user_0.local_username gives) OR "student-03-abc123@qwiklabs.net" (full
+    address, what user_0.username gives). main.tf appends the domain only when
+    it is absent.
 
     ⚠️ NOT injected automatically. Qwiklabs passes only gcp_project_id,
     gcp_region and gcp_zone on its own. This one arrives ONLY because
@@ -87,13 +89,25 @@ variable "username" {
   EOT
   type        = string
 
+  # ⚠️ EITHER FORM IS ACCEPTED, deliberately. main.tf appends the domain only when
+  # it is missing, so this works whichever reference qwiklabs.yaml passes.
+  #
+  # Measured 2026-08-18 on a live Start Lab run, and the two are NOT the same:
+  #   user_0.username        -> "student-03-5f4bdd24d19c@qwiklabs.net"   FULL EMAIL
+  #   user_0.local_username  -> "student-03-5f4bdd24d19c"                LOCAL PART
+  # qwiklabs.yaml passes local_username, matching the 128 labs in this repo that
+  # use it. An earlier revision passed `username` and this validation rejected it
+  # — a correct rejection of a real bug, but one that killed the apply outright.
+  # Tolerating both is cheap and turns a dead room into a working one.
+  #
   # AlloyDB does NOT validate that an ALLOYDB_IAM_USER principal exists — it will
   # happily create a database user for an address nobody owns. The apply succeeds,
   # the output looks right, and the student has no alloydbsuperuser until they hit
-  # Task 3 and can't build the index. Caught exactly that way on the first live apply.
+  # Task 3 and can't build the index. So the shape of this value still matters;
+  # it just should not be fatal.
   validation {
-    condition     = !can(regex("@", var.username))
-    error_message = "username must be the local part only (e.g. student-03-abc123), with no @domain — main.tf appends @qwiklabs.net."
+    condition     = length(regexall("@", var.username)) <= 1
+    error_message = "username must be either the local part (student-03-abc123) or one full address (student-03-abc123@qwiklabs.net)."
   }
 
   validation {
