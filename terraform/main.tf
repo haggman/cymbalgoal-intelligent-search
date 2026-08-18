@@ -58,6 +58,11 @@ resource "google_project_service" "apis" {
     #   (model_id, search_string, documents text[], top_n)
     # and that form draws its models from Discovery Engine. Without this, Task 5
     # fails at the last step of the lab — the worst place to find out.
+    #
+    # ⚠️ NOT SUFFICIENT ON ITS OWN. The service agent also needs
+    # roles/discoveryengine.viewer — see google_project_iam_member
+    # "alloydb_discoveryengine" below. Enabling the API without the role fails
+    # at exactly the same place, with a 403 instead of a missing-API error.
     "discoveryengine.googleapis.com",
   ])
   service            = each.value
@@ -227,6 +232,49 @@ resource "google_alloydb_instance" "primary" {
 resource "google_project_iam_member" "alloydb_vertex" {
   project    = var.gcp_project_id
   role       = "roles/aiplatform.user"
+  member     = "serviceAccount:service-${data.google_project.current.number}@gcp-sa-alloydb.iam.gserviceaccount.com"
+  depends_on = [google_alloydb_cluster.main]
+}
+
+# -----------------------------------------------------------------------------
+# ⚠️ THE SECOND BINDING EVERYTHING-AT-THE-END DEPENDS ON
+# -----------------------------------------------------------------------------
+# Without this, ai.rank() fails and Task 5 dies at the final step of the lab.
+#
+# Measured, 2026-08-18, on a live cluster with the API already enabled:
+#   GAV07: Permission denied on the resource.
+#   PermissionDenied: ... 403 "Permission 'discoveryengine.rankingConfigs.rank'
+#   denied on resource '//discoveryengine.googleapis.com/projects/<N>/locations/
+#   global/rankingConfigs/default_ranking_config'"
+#
+# ⚠️ ENABLING THE API IS NOT THE SAME AS BEING ALLOWED TO CALL IT. The
+# discoveryengine.googleapis.com entry in google_project_service above was added
+# for this feature and is necessary but NOT sufficient — the service agent still
+# needs a role. The two are separate mistakes and this file previously made the
+# second one.
+#
+# ⚠️ roles/aiplatform.user does NOT cover this. ai.rank()'s reranker form is
+# backed by Discovery Engine, not Vertex — see model_request_url in
+# google_ml.model_info_view, which points at discoveryengine.googleapis.com for
+# every semantic-ranker-* model. Different API, different role.
+#
+# ⚠️ THE ROLE NAME IS COUNTERINTUITIVE AND WAS VERIFIED, NOT GUESSED. Checked
+# against `gcloud iam roles describe`:
+#
+#   roles/discoveryengine.viewer   HAS rankingConfigs.rank   ← narrowest that works
+#   roles/discoveryengine.user     does NOT
+#   roles/discoveryengine.editor   has it
+#   roles/discoveryengine.admin    has it
+#
+# "user" is the obvious guess and it is wrong. Do not swap this for it.
+#
+# Note also that the ranking config resolves to locations/global. Discovery
+# Engine offers global, us and eu only — no single-region endpoints. That, not
+# the embedding model, is the real constraint on which regions this lab can run
+# in, and Task 5 is the reason.
+resource "google_project_iam_member" "alloydb_discoveryengine" {
+  project    = var.gcp_project_id
+  role       = "roles/discoveryengine.viewer"
   member     = "serviceAccount:service-${data.google_project.current.number}@gcp-sa-alloydb.iam.gserviceaccount.com"
   depends_on = [google_alloydb_cluster.main]
 }
