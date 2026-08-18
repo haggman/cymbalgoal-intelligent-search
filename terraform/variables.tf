@@ -71,7 +71,13 @@ variable "gcp_zone" {
 variable "username" {
   description = <<-EOT
     The student's lab username, LOCAL PART ONLY (e.g. "student-03-abc123").
-    Injected by Qwiklabs. main.tf appends "@qwiklabs.net".
+    main.tf appends "@qwiklabs.net".
+
+    ⚠️ NOT injected automatically. Qwiklabs passes only gcp_project_id,
+    gcp_region and gcp_zone on its own. This one arrives ONLY because
+    qwiklabs.yaml declares it under startup_script.custom_properties as
+    `username -> user_0.username`. Delete that block and this apply halts on
+    "No value for required variable" for every student simultaneously.
 
     Load-bearing, not cosmetic: it is how the student is granted alloydbsuperuser,
     which Task 3 needs for CREATE INDEX ... USING bm25 and Lab 3 needs for the
