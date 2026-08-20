@@ -1,6 +1,6 @@
-# CymbalGoal — Intelligent Search: From Keywords to Hybrid
+# CymbalGoal — AlloyDB as a Search Engine: From Keywords to Hybrid
 
-Companion repository for the CymbalGoal AlloyDB workshop, **Lab 1 of 3**.
+Companion repository for the CymbalGoal AlloyDB workshop.
 
 CymbalGoal is a global football fan and analytics platform. Fans follow clubs and players, rate
 matches, and search across 13,439 players and 796 clubs drawn from the Big 5 European leagues plus
