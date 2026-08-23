@@ -15,3 +15,8 @@ manifest.json
 .ipynb_checkpoints/
 __pycache__/
 .DS_Store
+
+# internal build tooling — kept local, not shipped to students
+build/
+lint_md.py
+notebooks/00-provisioning-prototype.ipynb

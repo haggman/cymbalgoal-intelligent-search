@@ -19,7 +19,6 @@ inspect the infrastructure that was built for you, and rebuild the whole thing i
 | :-- | :-- | :-- |
 | `notebooks/` | The data-preparation notebook — how the profile text was generated and embedded | No. Reference and post-event study. |
 | `terraform/` | The infrastructure that provisions your lab cluster | No. Runs automatically at Start Lab. |
-| `build/` | Internal build and verification scripts | No. Not student-facing. |
 
 ### `notebooks/`
 
