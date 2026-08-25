@@ -8,8 +8,6 @@ running them out of order does not work.
 | 1 | `cymbalgoal_de_pipeline_part1.ipynb` | 1–3 | schema, the eight relational tables, `schema.sql`, `manifest.json` |
 | 2 | `cymbalgoal_de_pipeline_part2.ipynb` | 4–6 | 14,235 profiles, embeddings, the two pass-2 CSVs, `load_profiles.sql` |
 
-`00-provisioning-prototype.ipynb` belongs to the Terraform/provisioning work, not the data pipeline.
-
 ## Part 2 — current version
 
 | | |
